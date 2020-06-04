@@ -21,6 +21,7 @@
 #include "ftpServer.h"
 
 #include "fs.h"
+#include "gettext.h"
 #include "licenses.h"
 #include "log.h"
 #include "platform.h"
@@ -68,6 +69,21 @@ platform::Mutex s_lock;
 
 /// \brief Free space string
 std::string s_freeSpace;
+
+std::pair<std::string, std::string> const s_languageMap[] = {
+    // clang-format off
+    {"Deutsch",              "de_DE"},
+    {"English (US)",         "en_US"},
+    {"English (UK)",         "en_GB"},
+    {"Español",              "es_ES"},
+    {"Français",             "fr_FR"},
+    {"Italiano",             "it_IT"},
+    {"日本語",               "ja_JP"},
+    {"Nederlands",           "nl_NL"},
+    {"Português (Portugal)", "pt_PT"},
+    {"Русский",              "ru_RU"},
+    // clang-format on
+};
 }
 
 ///////////////////////////////////////////////////////////////////////////
@@ -105,7 +121,7 @@ void FtpServer::draw ()
 		consoleSelect (&g_statusConsole);
 		std::printf ("\x1b[0;0H\x1b[32;1m%s \x1b[36;1m%s%s",
 		    STATUS_STRING,
-		    m_socket ? m_socket->sockName ().name () : "Waiting on WiFi",
+		    m_socket ? m_socket->sockName ().name () : _ ("Waiting on WiFi"),
 		    m_socket ? port : "");
 
 #ifndef NDS
@@ -170,7 +186,7 @@ void FtpServer::draw ()
 			std::snprintf (title,
 			    sizeof (title),
 			    STATUS_STRING " %s###ftpd",
-			    m_socket ? m_name.c_str () : "Waiting for WiFi...");
+			    m_socket ? m_name.c_str () : _ ("Waiting on WiFi..."));
 		}
 
 		ImGui::Begin (title,
@@ -188,7 +204,7 @@ void FtpServer::draw ()
 
 #ifndef _3DS
 	ImGui::BeginChild (
-	    "Logs", ImVec2 (0, 0.5f * height), false, ImGuiWindowFlags_HorizontalScrollbar);
+	    _ ("Logs"), ImVec2 (0, 0.5f * height), false, ImGuiWindowFlags_HorizontalScrollbar);
 #endif
 	drawLog ();
 #ifndef _3DS
@@ -201,7 +217,7 @@ void FtpServer::draw ()
 	// bottom screen
 	ImGui::SetNextWindowSize (ImVec2 (width * 0.8f, height * 0.5f));
 	ImGui::SetNextWindowPos (ImVec2 (width * 0.1f, height * 0.5f), ImGuiCond_FirstUseEver);
-	ImGui::Begin ("Sessions",
+	ImGui::Begin (_ ("Sessions"),
 	    nullptr,
 	    ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize |
 	        ImGuiWindowFlags_MenuBar);
@@ -226,6 +242,7 @@ UniqueFtpServer FtpServer::create ()
 	updateFreeSpace ();
 
 	auto config = FtpConfig::load (FTPDCONFIG);
+	setLanguage (config->language ().c_str ());
 
 	return UniqueFtpServer (new FtpServer (std::move (config)));
 }
@@ -298,7 +315,7 @@ void FtpServer::handleNetworkFound ()
 	m_name.resize (std::strlen (name) + 3 + 5);
 	m_name.resize (std::sprintf (m_name.data (), "[%s]:%u", name, sockName.port ()));
 
-	info ("Started server at %s\n", m_name.c_str ());
+	info (_ ("Started server at %s\n"), m_name.c_str ());
 
 	LOCKED (m_socket = std::move (socket));
 }
@@ -317,7 +334,7 @@ void FtpServer::handleNetworkLost ()
 		LOCKED (sock = std::move (m_socket));
 	}
 
-	info ("Stopped server at %s\n", m_name.c_str ());
+	info (_ ("Stopped server at %s\n"), m_name.c_str ());
 }
 
 #ifndef CLASSIC
@@ -329,15 +346,16 @@ void FtpServer::showMenu ()
 	if (ImGui::BeginMenuBar ())
 	{
 #if defined(_3DS) || defined(__SWITCH__)
-		if (ImGui::BeginMenu (u8"Menu \xee\x80\x83")) // Y Button
+		// TRANSLATORS: \xee\x80\x83 (Y button)
+		if (ImGui::BeginMenu (_ ("Menu \xee\x80\x83"))) // Y Button
 #else
-		if (ImGui::BeginMenu ("Menu"))
+		if (ImGui::BeginMenu (_ ("Menu")))
 #endif
 		{
-			if (ImGui::MenuItem ("Settings"))
+			if (ImGui::MenuItem (_ ("Settings")))
 				m_showSettings = true;
 
-			if (ImGui::MenuItem ("About"))
+			if (ImGui::MenuItem (_ ("About")))
 				m_showAbout = true;
 
 			ImGui::EndMenu ();
@@ -352,6 +370,22 @@ void FtpServer::showMenu ()
 #ifndef NDS
 			auto const lock = m_config->lockGuard ();
 #endif
+			auto const &language = m_config->language ();
+			m_languageSetting    = std::numeric_limits<unsigned>::max ();
+			for (unsigned i = 0; i < std::extent_v<decltype (s_languageMap)>; ++i)
+			{
+				auto const &code = s_languageMap[i].second;
+				if (language == code)
+				{
+					m_languageSetting = i;
+					break;
+				}
+
+				// default to English (US)
+				/// \todo get language from system settings
+				if (code == "en_US" && m_languageSetting == std::numeric_limits<unsigned>::max ())
+					m_languageSetting = i;
+			}
 
 			m_userSetting = m_config->user ();
 			m_userSetting.resize (32);
@@ -375,7 +409,7 @@ void FtpServer::showMenu ()
 			m_passphraseSetting.resize (63);
 #endif
 
-			ImGui::OpenPopup ("Settings");
+			ImGui::OpenPopup (_ ("Settings"));
 		}
 
 		showSettings ();
@@ -384,7 +418,7 @@ void FtpServer::showMenu ()
 	if (m_showAbout)
 	{
 		if (!prevShowAbout)
-			ImGui::OpenPopup ("About");
+			ImGui::OpenPopup (_ ("About"));
 
 		showAbout ();
 	}
@@ -399,24 +433,37 @@ void FtpServer::showSettings ()
 
 	ImGui::SetNextWindowSize (ImVec2 (width * 0.8f, height * 0.5f));
 	ImGui::SetNextWindowPos (ImVec2 (width * 0.1f, height * 0.5f));
-	if (ImGui::BeginPopupModal ("Settings",
+	if (ImGui::BeginPopupModal (_ ("Settings"),
 	        nullptr,
 	        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
 #else
-	if (ImGui::BeginPopupModal ("Settings", nullptr, ImGuiWindowFlags_AlwaysAutoResize))
+	if (ImGui::BeginPopupModal (_ ("Settings"), nullptr, ImGuiWindowFlags_AlwaysAutoResize))
 #endif
 	{
-		ImGui::InputText ("User",
+		if (ImGui::BeginCombo (_ ("Language"), s_languageMap[m_languageSetting].first.c_str ()))
+		{
+			for (unsigned i = 0; i < std::extent_v<decltype (s_languageMap)>; ++i)
+			{
+				if (ImGui::Selectable (s_languageMap[i].first.c_str (), i == m_languageSetting))
+				{
+					m_languageSetting = i;
+					ImGui::SetItemDefaultFocus ();
+				}
+			}
+			ImGui::EndCombo ();
+		}
+
+		ImGui::InputText (_ ("User"),
 		    m_userSetting.data (),
 		    m_userSetting.size (),
 		    ImGuiInputTextFlags_AutoSelectAll);
 
-		ImGui::InputText ("Pass",
+		ImGui::InputText (_ ("Password"),
 		    m_passSetting.data (),
 		    m_passSetting.size (),
 		    ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_Password);
 
-		ImGui::InputScalar ("Port",
+		ImGui::InputScalar (_ ("Port"),
 		    ImGuiDataType_U16,
 		    &m_portSetting,
 		    nullptr,
@@ -425,13 +472,13 @@ void FtpServer::showSettings ()
 		    ImGuiInputTextFlags_AutoSelectAll);
 
 #ifdef _3DS
-		ImGui::Checkbox ("Get mtime", &m_getMTimeSetting);
+		ImGui::Checkbox (_ ("Get mtime"), &m_getMTimeSetting);
 #endif
 
 #ifdef __SWITCH__
-		ImGui::Checkbox ("Enable Access Point", &m_enableAPSetting);
+		ImGui::Checkbox (_ ("Enable Access Point"), &m_enableAPSetting);
 
-		ImGui::InputText ("SSID",
+		ImGui::InputText (_ ("SSID"),
 		    m_ssidSetting.data (),
 		    m_ssidSetting.size (),
 		    ImGuiInputTextFlags_AutoSelectAll);
@@ -439,7 +486,7 @@ void FtpServer::showSettings ()
 		if (ssidError)
 			ImGui::TextColored (ImVec4 (1.0f, 0.4f, 0.4f, 1.0f), ssidError);
 
-		ImGui::InputText ("Passphrase",
+		ImGui::InputText (_ ("Passphrase"),
 		    m_passphraseSetting.data (),
 		    m_passphraseSetting.size (),
 		    ImGuiInputTextFlags_AutoSelectAll | ImGuiInputTextFlags_Password);
@@ -448,13 +495,13 @@ void FtpServer::showSettings ()
 			ImGui::TextColored (ImVec4 (1.0f, 0.4f, 0.4f, 1.0f), passphraseError);
 #endif
 
-		auto const apply = ImGui::Button ("Apply", ImVec2 (75, 0));
+		auto const apply = ImGui::Button (_ ("Apply"), ImVec2 (75, 0));
 		ImGui::SameLine ();
-		auto const save = ImGui::Button ("Save", ImVec2 (75, 0));
+		auto const save = ImGui::Button (_ ("Save"), ImVec2 (75, 0));
 		ImGui::SameLine ();
-		auto const reset = ImGui::Button ("Reset", ImVec2 (75, 0));
+		auto const reset = ImGui::Button (_ ("Reset"), ImVec2 (75, 0));
 		ImGui::SameLine ();
-		auto const cancel = ImGui::Button ("Cancel", ImVec2 (75, 0));
+		auto const cancel = ImGui::Button (_ ("Cancel"), ImVec2 (75, 0));
 
 		if (apply || save)
 		{
@@ -465,6 +512,7 @@ void FtpServer::showSettings ()
 			auto const lock = m_config->lockGuard ();
 #endif
 
+			m_config->setLanguage (s_languageMap[m_languageSetting].second);
 			m_config->setUser (m_userSetting);
 			m_config->setPass (m_passSetting);
 			m_config->setPort (m_portSetting);
@@ -490,7 +538,7 @@ void FtpServer::showSettings ()
 			auto const lock = m_config->lockGuard ();
 #endif
 			if (!m_config->save (FTPDCONFIG))
-				error ("Failed to save config\n");
+				error (_ ("Failed to save config\n"));
 		}
 
 		if (reset)
@@ -534,17 +582,17 @@ void FtpServer::showAbout ()
 	ImGui::SetNextWindowSize (ImVec2 (width * 0.8f, height * 0.8f));
 	ImGui::SetNextWindowPos (ImVec2 (width * 0.1f, height * 0.1f));
 #endif
-	if (ImGui::BeginPopupModal ("About",
+	if (ImGui::BeginPopupModal (_ ("About"),
 	        nullptr,
 	        ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoResize))
 	{
 		ImGui::TextUnformatted (STATUS_STRING);
 		ImGui::TextWrapped ("Copyright © 2014-2020 Michael Theall, Dave Murphy, TuxSH");
 		ImGui::Separator ();
-		ImGui::Text ("Platform: %s", io.BackendPlatformName);
-		ImGui::Text ("Renderer: %s", io.BackendRendererName);
+		ImGui::Text (_ ("Platform: %s"), io.BackendPlatformName);
+		ImGui::Text (_ ("Renderer: %s"), io.BackendRendererName);
 
-		if (ImGui::Button ("OK", ImVec2 (100, 0)))
+		if (ImGui::Button (_ ("OK"), ImVec2 (100, 0)))
 		{
 			m_showAbout = false;
 			ImGui::CloseCurrentPopup ();
